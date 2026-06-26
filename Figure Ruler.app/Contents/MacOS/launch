@@ -1,39 +1,9 @@
 #!/bin/bash
 # Figure Ruler launcher.
-# Serves the tool over http://localhost (so edge-snap works in every browser — browsers
-# block canvas pixel reads on file://) and opens it in the default browser.
-#
-# The server runs as THIS app's own foreground process, so it lives exactly as long as
-# the app is open and is NOT reaped when a launcher subshell exits (the bug that caused
-# "connection refused"). Quit the app (Cmd+Q, or Dock → Quit) when done to stop the server.
-
-# Finder launches apps with a minimal PATH — make common python3 locations visible.
-export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:$PATH"
-
-# Resolve this script's real location (follow symlinks/aliases), then the repo root.
+# Opens the tool directly in the default browser (file://). No local server — the
+# browser reads the file with its own permissions, which sidesteps the macOS privacy
+# (TCC) block that prevents an unsigned app from serving files inside a Desktop folder.
 SELF="$0"
 while [ -L "$SELF" ]; do SELF="$(readlink "$SELF")"; done
-ROOT="$(cd "$(dirname "$SELF")/../../.." && pwd)"   # → figure-ruler/ (holds figure_ruler.html)
-
-PORT=8770
-URL="http://localhost:${PORT}/figure_ruler.html"
-PY="$(command -v python3 || echo /usr/bin/python3)"
-
-# Already running (e.g. app re-launched)? Just (re)open the browser and exit.
-if curl -s -o /dev/null --max-time 1 "$URL"; then
-  open "$URL"
-  exit 0
-fi
-
-# Open the browser as soon as the server responds (runs in the background while we serve).
-(
-  for _ in $(seq 1 30); do
-    curl -s -o /dev/null --max-time 1 "$URL" && break
-    sleep 0.2
-  done
-  open "$URL"
-) &
-
-# Become the server in the foreground — this is the app's main process, so it persists.
-cd "$ROOT" || exit 1
-exec "$PY" -m http.server "$PORT"
+ROOT="$(cd "$(dirname "$SELF")/../../.." && pwd)"   # → figure-ruler/
+open "$ROOT/figure_ruler.html"

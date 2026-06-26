@@ -11,30 +11,30 @@ eyeballing pixels in Preview.
 - **Two-point measurement** with copy-paste-ready Δx / Δy / distance — no more `+15/300`.
 - Configurable canvas size (default 8.5 × 11 in) and DPI (default 300).
 
-No build step, no dependencies beyond a browser and `python3`.
+No build step, no dependencies — just a browser.
 
 ## Use
 
-**Easiest:** double-click **`Figure Ruler.app`**. It serves the tool locally and opens
-it in your default browser, then you click **Open PNG…** and pick a figure.
+**Easiest:** double-click **`Figure Ruler.app`** — it opens the tool in your default
+browser. Then click **Open PNG…** and pick a figure.
 
-Why a local server? Browsers block reading image pixels on `file://`, which would
-disable edge-snap — serving over `http://localhost` avoids that.
+> Load images through **Open PNG…** (the file picker): edge-snap reads the pixels of
+> files opened that way. The auto-loaded sample is display-only — snap activates once
+> you Open a PNG.
 
 **Controls:** scroll = zoom (at cursor) · Space + drag = pan · click = drop point A
 then B · a 3rd click starts over. Copy any value with its **copy** button, or grab
 A/B straight as `x=, y=`.
 
-> You can also open `figure_ruler.html` directly, but snapping may be disabled by the
-> browser's `file://` restriction unless you load via **Open PNG…**.
+You can also just open `figure_ruler.html` in any browser directly — the `.app` is only
+a convenience launcher.
 
 ## Install on another Mac
 
 ```bash
 git clone https://github.com/jdpreston30/figure-ruler.git
-cd figure-ruler
 ```
 
-Then double-click `Figure Ruler.app`. Requires `python3` (ships with the macOS
-Command Line Tools). The `.app` is an unsigned local launcher (a shell script) — if
-macOS blocks the first launch, right-click it → **Open** once.
+Then double-click `Figure Ruler.app` (or open `figure_ruler.html` directly). The `.app`
+is an unsigned local launcher (a shell script) — if macOS blocks the first launch,
+right-click it → **Open** once.
