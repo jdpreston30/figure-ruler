@@ -308,6 +308,17 @@ function resolvePoint(ix, iy) {
   if (cfg().snap) { const s = nearestEdge(ix, iy); if (s) return { ix: s.ix, iy: s.iy, snapped: true }; }
   return { ix, iy, snapped: false };
 }
+// When a dragged point has no object to snap to, magnetise it to axis-alignment with its
+// fixed partner — near-horizontal snaps Δy→0, near-vertical snaps Δx→0 — i.e. it clings to
+// the triangle's leg lines. Tolerance ≈ 12 screen px.
+function alignToRef(p, ref) {
+  if (!ref) return p;
+  const tol = 12 / view.scale;
+  let ix = p.ix, iy = p.iy;
+  if (Math.abs(iy - ref.iy) < tol) iy = ref.iy;
+  if (Math.abs(ix - ref.ix) < tol) ix = ref.ix;
+  return { ix, iy, snapped: p.snapped };
+}
 // Which existing endpoint (if any) is under the screen point (px,py) — for grab-to-move.
 function nearEndpoint(px, py) {
   const R2 = 12 * 12;
@@ -330,18 +341,21 @@ cv.addEventListener("mousemove", e => {
     drag.moved += Math.abs(px - drag.lastPx) + Math.abs(py - drag.lastPy);
     drag.lastPx = px; drag.lastPy = py;
     if (onImg) {
-      const p = resolvePoint(ix, iy);
       if (drag.grab === "new") {
-        if (!drag.startedLine && drag.moved > 4) {
+        if (drag.moved > 4) {
           const a = resolvePoint(ix_(drag.pressPx), iy_(drag.pressPy));
-          points = [{ ix: a.ix, iy: a.iy }, { ix: p.ix, iy: p.iy }];
-          drag.startedLine = true;
-        } else if (drag.startedLine) {
-          points[1] = { ix: p.ix, iy: p.iy };
+          let b = resolvePoint(ix, iy);
+          if (cfg().snap && !b.snapped) b = alignToRef(b, a);     // no object → align B to A's axes
+          points = [{ ix: a.ix, iy: a.iy }, { ix: b.ix, iy: b.iy }];
+          drag.startedLine = true; hover = b;
         }
-      } else if (drag.grab === "A") points[0] = { ix: p.ix, iy: p.iy };
-      else if (drag.grab === "B") points[1] = { ix: p.ix, iy: p.iy };
-      hover = p; updateReadout();
+      } else if (drag.grab === "A" || drag.grab === "B") {
+        const mi = drag.grab === "A" ? 0 : 1, ref = points[mi ? 0 : 1];
+        let p = resolvePoint(ix, iy);
+        if (cfg().snap && !p.snapped) p = alignToRef(p, ref);     // no object → align to the fixed endpoint
+        points[mi] = { ix: p.ix, iy: p.iy }; hover = p;
+      }
+      updateReadout();
     }
     draw(); return;
   }
@@ -364,8 +378,7 @@ cv.addEventListener("mousedown", e => {
     e.preventDefault(); return;
   }
   if (e.button !== 0) return;
-  // Measure mode: cancel any pending click, begin a gesture (grab endpoint, or new line).
-  if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+  // Measure mode: begin a gesture (grab an existing endpoint, or start a new line).
   const grab = nearEndpoint(px, py) || "new";
   drag = { grab, pressPx: px, pressPy: py, lastPx: px, lastPy: py, moved: 0, startedLine: false };
 });
