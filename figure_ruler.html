@@ -123,7 +123,7 @@
       <div class="row"><span class="k">image</span><span class="val" id="imgInfo">—</span></div>
       <div class="row"><span class="k">eff. DPI</span><span class="val" id="effDpi">—</span></div>
       <div class="hint" style="margin-top:6px">
-        Scroll = zoom (at cursor) · +/− buttons = zoom · Right-drag = pan · Click = drop A then B · 3rd click starts over.<br>
+        Scroll / +− = zoom · Right-drag or double-click (✋ hand) = pan · <b>Drag = measure A→B</b> (snaps live) · click = single point · drag A or B to adjust.<br>
         Cowplot origin is <b>bottom-left</b> — matches <code>draw_label(x=, y=)</code>.
       </div>
     </div>
@@ -141,7 +141,10 @@ let edge = null;                 // Uint8Array(imgW*imgH): 1 = content-edge pixe
 let view = { scale: 1, tx: 0, ty: 0 };
 let points = [];                 // {ix, iy} in IMAGE pixels (already snapped)
 let hover = null;                // {ix, iy, snapped}
+let mode = "measure";            // "measure" | "hand" (double-click toggles)
 let spaceDown = false, panning = false, panStart = null, dragMoved = 0;
+let drag = null;                 // active left gesture: { grab:'A'|'B'|'new', pressPx,pressPy, lastPx,lastPy, moved, startedLine }
+let clickTimer = null;           // deferred single click (so a double-click can cancel it)
 
 const cfg = () => ({
   cw: +$("cw").value, ch: +$("ch").value, dpi: +$("dpi").value,
@@ -252,28 +255,49 @@ function draw() {
 
   // overlay (screen space)
   const dpr = window.devicePixelRatio || 1; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  // measurement line
+  // measurement triangle (dark grey): A→B hypotenuse + Δx / Δy legs, labelled with units
   if (points.length === 2) {
-    const a = points[0], b = points[1];
-    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.4; ctx.setLineDash([6, 4]);
-    ctx.beginPath(); ctx.moveTo(sx(a.ix), sy(a.iy)); ctx.lineTo(sx(b.ix), sy(b.iy)); ctx.stroke();
+    const A = points[0], B = points[1];
+    const ax = sx(A.ix), ay = sy(A.iy), bx = sx(B.ix), by = sy(B.iy);
+    // right-angle legs (dashed) through the corner (B.x, A.y)
+    ctx.strokeStyle = "rgba(55,55,55,0.8)"; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, ay); ctx.lineTo(bx, by); ctx.stroke();
     ctx.setLineDash([]);
+    // hypotenuse (solid dark grey)
+    ctx.strokeStyle = "#333"; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    // edge labels in the current units
+    const ua = toUnits(A.ix, A.iy), ub = toUnits(B.ix, B.iy), u = ua.u;
+    const adx = Math.abs(ub.x - ua.x), ady = Math.abs(ub.y - ua.y);
+    const adist = Math.hypot(ub.x - ua.x, ub.y - ua.y);
+    edgeLabel(fmt(adx) + " " + u, (ax + bx) / 2, ay + (by > ay ? -8 : 14));                 // Δx leg
+    edgeLabel(fmt(ady) + " " + u, bx + (bx > ax ? 9 : -9), (ay + by) / 2, bx > ax ? "left" : "right"); // Δy leg
+    let nx = -(by - ay), ny = bx - ax; const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
+    edgeLabel(fmt(adist) + " " + u, (ax + bx) / 2 + nx * 13, (ay + by) / 2 + ny * 13);        // distance (hypotenuse)
   }
-  points.forEach((p, i) => drawDot(sx(p.ix), sy(p.iy), i === 0 ? "#4aa3ff" : "#ffcf5c", i === 0 ? "A" : "B"));
-  // hover crosshair + snap target
-  if (hover) {
+  points.forEach((p, i) => drawDot(sx(p.ix), sy(p.iy), i === 0 ? "#2f6fd0" : "#cc5500", i === 0 ? "A" : "B"));
+  // hover crosshair + snap target (grey when not snapped, so it shows on a white page)
+  if (hover && !drag) {
     const hx = sx(hover.ix), hy = sy(hover.iy);
-    ctx.strokeStyle = hover.snapped ? "#ff5c8a" : "rgba(255,255,255,.45)"; ctx.lineWidth = 1;
+    ctx.strokeStyle = hover.snapped ? "#ff5c8a" : "rgba(70,70,70,.55)"; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(hx - 9, hy); ctx.lineTo(hx + 9, hy);
     ctx.moveTo(hx, hy - 9); ctx.lineTo(hx, hy + 9); ctx.stroke();
     if (hover.snapped) { ctx.fillStyle = "#ff5c8a"; ctx.beginPath(); ctx.arc(hx, hy, 3, 0, 7); ctx.fill(); }
   }
 }
 function drawDot(x, y, color, lbl) {
-  ctx.fillStyle = color; ctx.strokeStyle = "#06121f"; ctx.lineWidth = 1.5;
+  ctx.fillStyle = color; ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.arc(x, y, 4.5, 0, 7); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = "#06121f"; ctx.font = "bold 10px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillStyle = "#ffffff"; ctx.font = "bold 10px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
   ctx.fillText(lbl, x, y + 0.5);
+}
+// A measurement label with a white halo so it reads over any figure content.
+function edgeLabel(text, x, y, align) {
+  ctx.font = "bold 11px ui-monospace, SFMono-Regular, Menlo, monospace";
+  ctx.textAlign = align || "center"; ctx.textBaseline = "middle";
+  ctx.lineJoin = "round"; ctx.lineWidth = 3.2; ctx.strokeStyle = "rgba(255,255,255,0.92)";
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = "#2b2b2b"; ctx.fillText(text, x, y);
 }
 
 // ---- interaction -----------------------------------------------------------
@@ -285,6 +309,15 @@ function resolvePoint(ix, iy) {
   if (cfg().snap) { const s = nearestEdge(ix, iy); if (s) return { ix: s.ix, iy: s.iy, snapped: true }; }
   return { ix, iy, snapped: false };
 }
+// Which existing endpoint (if any) is under the screen point (px,py) — for grab-to-move.
+function nearEndpoint(px, py) {
+  const R2 = 12 * 12;
+  for (let i = Math.min(points.length, 2) - 1; i >= 0; i--) {
+    const dx = sx(points[i].ix) - px, dy = sy(points[i].iy) - py;
+    if (dx * dx + dy * dy <= R2) return i === 0 ? "A" : "B";
+  }
+  return null;
+}
 cv.addEventListener("mousemove", e => {
   if (!img) return;
   const { px, py } = eventToImage(e);
@@ -292,8 +325,31 @@ cv.addEventListener("mousemove", e => {
     view.tx += px - panStart.px; view.ty += py - panStart.py; panStart = { px, py }; dragMoved += 1; draw(); return;
   }
   const ix = ix_(px), iy = iy_(py);
-  if (ix < 0 || iy < 0 || ix > imgW || iy > imgH) { hover = null; $("livePos").textContent = "—"; $("liveSnap").textContent = "off image"; draw(); return; }
+  const onImg = !(ix < 0 || iy < 0 || ix > imgW || iy > imgH);
+  // Active measure drag: draw a new line live, or move a grabbed endpoint.
+  if (drag) {
+    drag.moved += Math.abs(px - drag.lastPx) + Math.abs(py - drag.lastPy);
+    drag.lastPx = px; drag.lastPy = py;
+    if (onImg) {
+      const p = resolvePoint(ix, iy);
+      if (drag.grab === "new") {
+        if (!drag.startedLine && drag.moved > 4) {
+          const a = resolvePoint(ix_(drag.pressPx), iy_(drag.pressPy));
+          points = [{ ix: a.ix, iy: a.iy }, { ix: p.ix, iy: p.iy }];
+          drag.startedLine = true;
+        } else if (drag.startedLine) {
+          points[1] = { ix: p.ix, iy: p.iy };
+        }
+      } else if (drag.grab === "A") points[0] = { ix: p.ix, iy: p.iy };
+      else if (drag.grab === "B") points[1] = { ix: p.ix, iy: p.iy };
+      hover = p; updateReadout();
+    }
+    draw(); return;
+  }
+  // Plain hover.
+  if (!onImg) { hover = null; $("livePos").textContent = "—"; $("liveSnap").textContent = "off image"; draw(); return; }
   hover = resolvePoint(ix, iy);
+  if (mode === "measure") cv.style.cursor = nearEndpoint(px, py) ? "move" : "crosshair";
   const u = toUnits(hover.ix, hover.iy);
   $("livePos").textContent = fmt(u.x) + ", " + fmt(u.y) + " " + u.u;
   $("liveSnap").textContent = hover.snapped ? "● snapped" : "no edge";
@@ -303,26 +359,44 @@ cv.addEventListener("mousemove", e => {
 cv.addEventListener("mousedown", e => {
   if (!img) return;
   const { px, py } = eventToImage(e);
-  // Pan with right-drag (button 2), middle-drag (button 1), or Space+left-drag.
-  if (e.button === 2 || e.button === 1 || spaceDown) {
+  // Pan: right-drag (2), middle-drag (1), Space+left, or hand-mode left-drag.
+  if (e.button === 2 || e.button === 1 || spaceDown || (mode === "hand" && e.button === 0)) {
     panning = true; panStart = { px, py }; dragMoved = 0; cv.style.cursor = "grabbing";
-    e.preventDefault();
+    e.preventDefault(); return;
   }
+  if (e.button !== 0) return;
+  // Measure mode: cancel any pending click, begin a gesture (grab endpoint, or new line).
+  if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+  const grab = nearEndpoint(px, py) || "new";
+  drag = { grab, pressPx: px, pressPy: py, lastPx: px, lastPy: py, moved: 0, startedLine: false };
 });
 // Suppress the browser context menu so right-drag pans cleanly.
 cv.addEventListener("contextmenu", e => e.preventDefault());
 window.addEventListener("mouseup", e => {
-  if (panning) { panning = false; cv.style.cursor = "crosshair"; if (dragMoved > 2) return; }
-  if (!img || spaceDown || e.button !== 0) return;
-  // treat as a click → drop a point (snapped)
-  const r = cv.getBoundingClientRect();
-  if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
-  const ix = ix_(e.clientX - r.left), iy = iy_(e.clientY - r.top);
-  if (ix < 0 || iy < 0 || ix > imgW || iy > imgH) return;
-  const p = resolvePoint(ix, iy);
-  if (points.length >= 2) points = [];
-  points.push({ ix: p.ix, iy: p.iy });
-  updateReadout(); draw();
+  if (panning) { panning = false; cv.style.cursor = (mode === "hand") ? "grab" : "crosshair"; return; }
+  if (!img || e.button !== 0 || !drag) return;
+  const g = drag; drag = null;
+  if (g.moved > 4) { updateReadout(); draw(); return; }   // was a real drag → already finalized live
+  if (g.grab !== "new") return;                           // clicked on an endpoint → no-op
+  // Deferred single click → drop a single point (a double-click cancels this).
+  const px = g.pressPx, py = g.pressPy;
+  clickTimer = setTimeout(() => {
+    clickTimer = null;
+    const ix = ix_(px), iy = iy_(py);
+    if (ix < 0 || iy < 0 || ix > imgW || iy > imgH) return;
+    const p = resolvePoint(ix, iy);
+    points = [{ ix: p.ix, iy: p.iy }];
+    updateReadout(); draw();
+  }, 230);
+});
+// Double-click toggles hand (pan) mode — cursor turns to a hand, left-drag pans.
+cv.addEventListener("dblclick", e => {
+  if (!img) return;
+  if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+  drag = null;
+  mode = (mode === "hand") ? "measure" : "hand";
+  cv.style.cursor = (mode === "hand") ? "grab" : "crosshair";
+  draw();
 });
 // Zoom by `factor`, keeping the image point under (px, py) fixed. Shared by scroll + buttons.
 function zoomAt(factor, px, py) {
