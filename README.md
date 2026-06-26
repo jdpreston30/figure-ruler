@@ -9,7 +9,9 @@ eyeballing pixels in Preview.
 - **Auto-snap to the nearest content edge** — magnetizes clicks to figure elements
   (works great on white backgrounds).
 - **Two-point measurement** with copy-paste-ready Δx / Δy / distance — no more `+15/300`.
-- Configurable canvas size (default 8.5 × 11 in) and DPI (default 300).
+- Configurable canvas size (default 8.5 × 11 in). Coordinates are DPI-independent —
+  derived from the canvas size and image pixels — so any render DPI (300, 600, …) gives
+  the same inches; the effective DPI is shown for reference.
 
 No build step, no dependencies — just a browser.
 
