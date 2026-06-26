@@ -122,7 +122,7 @@
       <div class="row"><span class="k">image</span><span class="val" id="imgInfo">—</span></div>
       <div class="row"><span class="k">eff. DPI</span><span class="val" id="effDpi">—</span></div>
       <div class="hint" style="margin-top:6px">
-        Scroll / +− = zoom · Right-drag or double-click (✋ hand) = pan · <b>Drag = measure A→B</b> (snaps live) · click = single point · drag A or B to adjust.<br>
+        Scroll / +− = zoom · Right-drag or ✋ hand (double-click figure) = pan · <b>Click A then B</b>, or <b>drag</b>, to measure A→B (snaps) · drag A/B to adjust.<br>
         Cowplot origin is <b>bottom-left</b> — matches <code>draw_label(x=, y=)</code>.
       </div>
     </div>
@@ -143,7 +143,7 @@ let hover = null;                // {ix, iy, snapped}
 let mode = "measure";            // "measure" | "hand" (double-click toggles)
 let spaceDown = false, panning = false, panStart = null, dragMoved = 0;
 let drag = null;                 // active left gesture: { grab:'A'|'B'|'new', pressPx,pressPy, lastPx,lastPy, moved, startedLine }
-let clickTimer = null;           // deferred single click (so a double-click can cancel it)
+let lastMoved = 0, lastGrab = null, prevPoints = null;   // click-vs-drag tracking + double-click undo
 
 const cfg = () => ({
   cw: +$("cw").value, ch: +$("ch").value,
@@ -374,31 +374,43 @@ cv.addEventListener("contextmenu", e => e.preventDefault());
 window.addEventListener("mouseup", e => {
   if (panning) { panning = false; cv.style.cursor = (mode === "hand") ? "grab" : "crosshair"; return; }
   if (!img || e.button !== 0 || !drag) return;
-  const g = drag; drag = null;
-  if (g.moved > 4) { updateReadout(); draw(); return; }   // was a real drag → already finalized live
-  if (g.grab !== "new") return;                           // clicked on an endpoint → no-op
-  // Deferred single click → drop a single point (a double-click cancels this).
-  const px = g.pressPx, py = g.pressPy;
-  clickTimer = setTimeout(() => {
-    clickTimer = null;
-    const ix = ix_(px), iy = iy_(py);
-    if (ix < 0 || iy < 0 || ix > imgW || iy > imgH) return;
-    const p = resolvePoint(ix, iy);
-    points = [{ ix: p.ix, iy: p.iy }];
-    updateReadout(); draw();
-  }, 230);
+  lastMoved = drag.moved; lastGrab = drag.grab; drag = null;   // remembered for the click that follows
+  if (lastMoved > 4) { updateReadout(); draw(); }              // a real drag → already finalized live
 });
-// Hand (pan) mode — cursor turns to a hand, left-drag pans. Toggle via the toolbar
-// button or by double-clicking the figure.
+// Hand (pan) mode — cursor turns to a hand, left-drag pans. Toggled by the toolbar
+// button or a double-click (handled in the click listener below).
 function setHand(on) {
   mode = on ? "hand" : "measure";
   drag = null;
-  if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
   cv.style.cursor = on ? "grab" : "crosshair";
   const b = $("handBtn"); if (b) b.classList.toggle("on", on);
   draw();
 }
-cv.addEventListener("dblclick", () => { if (img) setHand(mode !== "hand"); });
+// Click logic (uses the browser's click count so single clicks are instant):
+//   single click → drop / advance a point: 1st = A, 2nd = B (line + triangle), 3rd = start over.
+//     Two clicks at different spots both count as single clicks → quick A→B line.
+//   double-click (two clicks at the SAME spot) → toggle hand mode, undoing the stray point.
+cv.addEventListener("click", e => {
+  if (!img) return;
+  if (e.detail >= 2) {                                   // same-spot double-click
+    if (prevPoints) { points = prevPoints; updateReadout(); }
+    prevPoints = null;
+    setHand(mode !== "hand");
+    return;
+  }
+  prevPoints = null;
+  if (mode === "hand") return;                           // no measuring while panning
+  if (lastMoved > 4) { lastMoved = 0; return; }          // this click just ended a drag → ignore
+  if (lastGrab && lastGrab !== "new") return;            // clicked on an existing endpoint → no-op
+  const r = cv.getBoundingClientRect();
+  const ix = ix_(e.clientX - r.left), iy = iy_(e.clientY - r.top);
+  if (ix < 0 || iy < 0 || ix > imgW || iy > imgH) return;
+  const p = resolvePoint(ix, iy);
+  prevPoints = points.slice();                           // snapshot so a same-spot double-click can undo this
+  if (points.length >= 2) points = [{ ix: p.ix, iy: p.iy }];   // 3rd click → fresh A
+  else points.push({ ix: p.ix, iy: p.iy });                    // 1st → A, 2nd → B
+  updateReadout(); draw();
+});
 // Zoom by `factor`, keeping the image point under (px, py) fixed. Shared by scroll + buttons.
 function zoomAt(factor, px, py) {
   if (!img) return;
