@@ -74,6 +74,10 @@
       <label class="chk"><input type="radio" name="u" id="uCow" checked> cowplot in</label>
       <label class="chk"><input type="radio" name="u" id="uPx"> pixels</label>
     </div>
+    <div class="grp">
+      <button class="btn sub" id="zoomOut" title="Zoom out" style="padding:6px 11px;font-size:15px;line-height:1">−</button>
+      <button class="btn sub" id="zoomIn" title="Zoom in" style="padding:6px 11px;font-size:15px;line-height:1">+</button>
+    </div>
     <button class="btn sub" id="fit">Fit</button>
     <button class="btn sub" id="reset">Clear pts</button>
   </header>
@@ -119,7 +123,7 @@
       <div class="row"><span class="k">image</span><span class="val" id="imgInfo">—</span></div>
       <div class="row"><span class="k">eff. DPI</span><span class="val" id="effDpi">—</span></div>
       <div class="hint" style="margin-top:6px">
-        Scroll = zoom (at cursor) · Space+drag = pan · Click = drop A then B · 3rd click starts over.<br>
+        Scroll = zoom (at cursor) · +/− buttons = zoom · Right-drag = pan · Click = drop A then B · 3rd click starts over.<br>
         Cowplot origin is <b>bottom-left</b> — matches <code>draw_label(x=, y=)</code>.
       </div>
     </div>
@@ -299,8 +303,14 @@ cv.addEventListener("mousemove", e => {
 cv.addEventListener("mousedown", e => {
   if (!img) return;
   const { px, py } = eventToImage(e);
-  if (spaceDown || e.button === 1) { panning = true; panStart = { px, py }; dragMoved = 0; cv.style.cursor = "grabbing"; }
+  // Pan with right-drag (button 2), middle-drag (button 1), or Space+left-drag.
+  if (e.button === 2 || e.button === 1 || spaceDown) {
+    panning = true; panStart = { px, py }; dragMoved = 0; cv.style.cursor = "grabbing";
+    e.preventDefault();
+  }
 });
+// Suppress the browser context menu so right-drag pans cleanly.
+cv.addEventListener("contextmenu", e => e.preventDefault());
 window.addEventListener("mouseup", e => {
   if (panning) { panning = false; cv.style.cursor = "crosshair"; if (dragMoved > 2) return; }
   if (!img || spaceDown || e.button !== 0) return;
@@ -314,15 +324,22 @@ window.addEventListener("mouseup", e => {
   points.push({ ix: p.ix, iy: p.iy });
   updateReadout(); draw();
 });
-cv.addEventListener("wheel", e => {
-  if (!img) return; e.preventDefault();
-  const { px, py } = eventToImage(e);
-  const f = Math.exp(-e.deltaY * 0.0016);
-  const ns = Math.min(60, Math.max(0.05, view.scale * f));
+// Zoom by `factor`, keeping the image point under (px, py) fixed. Shared by scroll + buttons.
+function zoomAt(factor, px, py) {
+  if (!img) return;
+  const ns = Math.min(60, Math.max(0.05, view.scale * factor));
   const ix = ix_(px), iy = iy_(py);
   view.tx = px - ix * ns; view.ty = py - iy * ns; view.scale = ns;
   draw();
+}
+// Scroll/trackpad zoom — at the cursor (unchanged).
+cv.addEventListener("wheel", e => {
+  if (!img) return; e.preventDefault();
+  const { px, py } = eventToImage(e);
+  zoomAt(Math.exp(-e.deltaY * 0.0016), px, py);
 }, { passive: false });
+// Toolbar +/- buttons — zoom about the canvas centre.
+function zoomButton(factor) { const r = cv.getBoundingClientRect(); zoomAt(factor, r.width / 2, r.height / 2); }
 window.addEventListener("keydown", e => { if (e.code === "Space") { spaceDown = true; cv.style.cursor = "grab"; e.preventDefault(); } });
 window.addEventListener("keyup", e => { if (e.code === "Space") { spaceDown = false; cv.style.cursor = "crosshair"; } });
 
@@ -365,6 +382,8 @@ $("file").addEventListener("change", e => { const f = e.target.files[0]; if (f) 
 ["uCow", "uPx"].forEach(id => $(id).addEventListener("change", () => { updateReadout(); draw(); }));
 $("white").addEventListener("change", () => { if (img) buildEdgeMap(); draw(); });
 $("snap").addEventListener("change", draw);
+$("zoomIn").addEventListener("click", () => zoomButton(1.25));
+$("zoomOut").addEventListener("click", () => zoomButton(0.8));
 $("fit").addEventListener("click", () => { fit(); draw(); });
 $("reset").addEventListener("click", () => { points = []; updateReadout(); draw(); });
 window.addEventListener("resize", resize);
